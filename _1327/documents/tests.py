@@ -1,6 +1,7 @@
 import json
 import tempfile
 
+from django.conf import settings
 from django.contrib.auth.models import Group
 from django.core.files.base import ContentFile
 from django.core.urlresolvers import reverse
@@ -15,6 +16,8 @@ from reversion import revisions
 from _1327.documents.markdown_internal_link_extension import InternalLinksMarkdownExtension
 from _1327.information_pages.models import InformationDocument
 from _1327.main.utils import slugify
+from _1327.minutes.models import MinutesDocument
+from _1327.polls.models import Poll
 from _1327.user_management.models import UserProfile
 
 from .models import Attachment, Document, TemporaryDocumentText
@@ -24,6 +27,8 @@ class TestInternalLinkMarkDown(TestCase):
 	def setUp(self):
 		self.user = mommy.make(UserProfile, is_superuser=True)
 
+		self.md = markdown.Markdown(safe_mode='escape', extensions=[InternalLinksMarkdownExtension(), 'markdown.extensions.tables'])
+
 		document = mommy.prepare(InformationDocument, text="text")
 		with transaction.atomic(), revisions.create_revision():
 				document.save()
@@ -32,10 +37,15 @@ class TestInternalLinkMarkDown(TestCase):
 
 	def test_information_documents(self):
 		document = InformationDocument.objects.get()
-		md = markdown.Markdown(safe_mode='escape', extensions=[InternalLinksMarkdownExtension()])
-		text = md.convert('[description](document:' + str(document.id) + ')')
+		text = self.md.convert('[description](document:' + str(document.id) + ')')
 		link = reverse(document.get_view_url_name(), args=[document.url_title])
 		self.assertIn('<a href="' + link + '">description</a>', text)
+
+	def test_document_deleted(self):
+		document = InformationDocument.objects.get()
+		document.delete()
+		text = self.md.convert('[description](document:{})'.format(document.id))
+		self.assertIn('<a>[missing link]</a>', text)
 
 
 class TestRevertion(WebTest):
@@ -404,7 +414,7 @@ class TestAttachments(WebTest):
 
 		self.content = "test content of test attachment"
 		attachment_file = ContentFile(self.content)
-		self.attachment = mommy.make(Attachment, document=self.document)
+		self.attachment = mommy.make(Attachment, document=self.document, displayname="test")  # displayname does not include the extension
 		self.attachment.file.save('temp.txt', attachment_file)
 		self.attachment.save()
 
@@ -579,6 +589,11 @@ class TestAttachments(WebTest):
 			self.content,
 			msg="An attachment that has been downloaded should contain its original content"
 		)
+		self.assertEqual(
+			response.headers['Content-Disposition'],
+			"attachment; filename=\"b\'test.txt\'\"; filename*=UTF-8\'\'test.txt",
+			msg="The filename should include the file extension although not included in the displayname"
+		)
 
 		# try the same with a user that is in a group having the correct permission
 		response = self.app.get(reverse('documents:download_attachment'), params=params, user=self.group_user)
@@ -643,7 +658,7 @@ class TestAttachments(WebTest):
 	def test_attachment_change_no_direct_download(self):
 		self.assertFalse(self.attachment.no_direct_download, "attachments can be downloaded directly by default")
 		response = self.app.post(
-			reverse('documents:change_attachment_no_direct_download'),
+			reverse('documents:change_attachment'),
 			{'id': self.attachment.id, 'no_direct_download': 'false'},
 			user=self.user,
 			xhr=True,
@@ -656,7 +671,7 @@ class TestAttachments(WebTest):
 		self.assertFalse(self.attachment.no_direct_download)
 		user = mommy.make(UserProfile)
 		response = self.app.post(
-			reverse('documents:change_attachment_no_direct_download'),
+			reverse('documents:change_attachment'),
 			{'id': self.attachment.id, 'no_direct_download': 'false'},
 			user=user,
 			xhr=True,
@@ -666,7 +681,7 @@ class TestAttachments(WebTest):
 
 	def test_attachment_change_no_direct_download_wrong_request_type(self):
 		response = self.app.get(
-			reverse('documents:change_attachment_no_direct_download'),
+			reverse('documents:change_attachment'),
 			{'id': self.attachment.id, 'no_direct_download': 'false'},
 			user=self.user,
 			xhr=True,
@@ -676,8 +691,54 @@ class TestAttachments(WebTest):
 
 	def test_attachment_change_no_direct_download_no_ajax(self):
 		response = self.app.post(
-			reverse('documents:change_attachment_no_direct_download'),
+			reverse('documents:change_attachment'),
 			{'id': self.attachment.id, 'no_direct_download': 'false'},
+			user=self.user,
+			expect_errors=True,
+		)
+		self.assertEqual(response.status_code, 404)
+
+	def test_attachment_change_displayname(self):
+		new_displayname = 'lorem ipsum'
+		response = self.app.post(
+			reverse('documents:change_attachment'),
+			{'id': self.attachment.id, 'displayname': new_displayname},
+			user=self.user,
+			xhr=True,
+		)
+		self.assertEqual(response.status_code, 200, "it should be possible to change displayname")
+		attachment = Attachment.objects.get(pk=self.attachment.id)
+		self.assertEqual(attachment.displayname, new_displayname)
+
+	def test_attachment_change_displayname_permissions(self):
+		self.assertFalse(self.attachment.no_direct_download)
+		user = mommy.make(UserProfile)
+		new_displayname = 'lorem ipsum'
+		response = self.app.post(
+			reverse('documents:change_attachment'),
+			{'id': self.attachment.id, 'displayname': new_displayname},
+			user=user,
+			xhr=True,
+			expect_errors=True
+		)
+		self.assertEqual(response.status_code, 403)
+
+	def test_attachment_change_displayname_wrong_request_type(self):
+		new_displayname = 'lorem ipsum'
+		response = self.app.get(
+			reverse('documents:change_attachment'),
+			{'id': self.attachment.id, 'displayname': new_displayname},
+			user=self.user,
+			xhr=True,
+			expect_errors=True,
+		)
+		self.assertEqual(response.status_code, 404)
+
+	def test_attachment_change_attachment_no_ajax(self):
+		new_displayname = 'lorem ipsum'
+		response = self.app.post(
+			reverse('documents:change_attachment'),
+			{'id': self.attachment.id, 'displayname': new_displayname},
 			user=self.user,
 			expect_errors=True,
 		)
@@ -890,3 +951,93 @@ class TestDeletion(WebTest):
 		response = self.app.get(reverse(self.document.get_edit_url_name(), args=[self.document.url_title]), user=self.user)
 		self.assertEqual(response.status_code, 200)
 		self.assertIn("deleteDocumentButton", response.body.decode('utf-8'))
+
+
+class TestPreview(WebTest):
+	csrf_checks = False
+
+	def setUp(self):
+		self.document = mommy.make(Document)
+		self.user = mommy.make(UserProfile, is_superuser=True)
+
+	def test_preview_wrong_method(self):
+		response = self.app.post(reverse('documents:preview') + '?hash_value={}'.format(self.document.hash_value), status=404)
+		self.assertEqual(response.status_code, 404)
+
+	def test_preview_document_does_not_exist(self):
+		response = self.app.get(reverse('documents:preview') + '?hash_value={}'.format(1), status=404)
+		self.assertEqual(response.status_code, 404)
+
+	def test_preview_without_get_param(self):
+		response = self.app.get(reverse('documents:preview'), status=404)
+		self.assertEqual(response.status_code, 404)
+
+	def test_preview_view(self):
+		response = self.app.get(reverse('documents:preview') + '?hash_value={}'.format(self.document.hash_value))
+		self.assertEqual(response.status_code, 200)
+
+		self.assertIn(self.document.text, response.body.decode('utf-8'))
+
+		preview_url = '/ws/preview'
+		with self.settings(PREVIEW_URL=preview_url):
+			self.assertIn(preview_url, response.body.decode('utf-8'))
+
+
+class TestPermissionOverview(WebTest):
+	csrf_checks = False
+
+	def setUp(self):
+		self.user = mommy.make(UserProfile, is_superuser=True)
+		self.minutes_document = mommy.make(MinutesDocument)
+		self.poll = mommy.make(Poll)
+		self.information_document = mommy.make(InformationDocument)
+		self.group = mommy.make(Group)
+		self.minutes_document.set_all_permissions(self.group)
+		self.poll.set_all_permissions(self.group)
+		self.information_document.set_all_permissions(self.group)
+
+		self.anonymous_group = Group.objects.get(name=settings.ANONYMOUS_GROUP_NAME)
+		self.university_network_group = Group.objects.get(name=settings.UNIVERSITY_GROUP_NAME)
+		self.student_group = Group.objects.get(name=settings.STUDENT_GROUP_NAME)
+		self.staff_group = Group.objects.get(name=settings.STAFF_GROUP_NAME)
+		groups = [self.anonymous_group, self.university_network_group, self.student_group, self.staff_group]
+		self.documents = [self.minutes_document, self.poll, self.information_document]
+		for document in self.documents:
+			for group in groups:
+				assign_perm(document.view_permission_name, group, document)
+			assign_perm(document.edit_permission_name, self.staff_group, document)
+
+	def test_permission_display(self):
+		"""
+		Test if the permissions are correctly shown in the sidebar
+		"""
+		icons = [
+			"glyphicon-globe permission-icon-view",
+			"glyphicon-education permission-icon-view",
+			"glyphicon-user permission-icon-view",
+			"glyphicon-briefcase permission-icon-edit"
+		]
+		for document in self.documents:
+			response = self.app.get(reverse(document.get_edit_url_name(), args=[self.minutes_document.url_title]), user=self.user)
+			for icon in icons:
+				self.assertIn(icon, response)
+
+	def test_permission_display_2(self):
+		"""
+		Test if the permissions are correctly shown in the sidebar
+		"""
+		for document in self.documents:
+			remove_perm(document.view_permission_name, self.anonymous_group, document)
+			assign_perm(document.edit_permission_name, self.student_group, document)
+			remove_perm(document.edit_permission_name, self.staff_group, document)
+
+		icons = [
+			"glyphicon-globe permission-icon-none",
+			"glyphicon-education permission-icon-view",
+			"glyphicon-user permission-icon-edit",
+			"glyphicon-briefcase permission-icon-view"
+		]
+		for document in self.documents:
+			response = self.app.get(reverse(document.get_edit_url_name(), args=[self.minutes_document.url_title]), user=self.user)
+			for icon in icons:
+				self.assertIn(icon, response)

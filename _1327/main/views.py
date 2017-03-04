@@ -8,7 +8,7 @@ from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
 from django.core.urlresolvers import reverse
 from django.forms import formset_factory, modelformset_factory
 from django.http import HttpResponse, HttpResponseRedirect
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import get_object_or_404, Http404, redirect, render
 from django.utils.translation import ugettext_lazy as _
 from django.views.decorators.http import require_POST
 from guardian.shortcuts import get_objects_for_user
@@ -17,11 +17,12 @@ import markdown
 from markdown.extensions.toc import TocExtension
 
 from _1327.documents.models import Document
-from _1327.documents.utils import permission_warning
+from _1327.documents.views import edit as document_edit, view as document_view
 from _1327.main.forms import AbbreviationExplanationForm, get_permission_form
 from _1327.main.models import AbbreviationExplanation
-from _1327.main.utils import abbreviation_explanation_markdown
-
+from _1327.main.utils import abbreviation_explanation_markdown, document_permission_overview, find_root_menu_items
+from _1327.shortlinks.models import Shortlink
+from _1327.shortlinks.views import edit as shortlink_edit, view as shortlink_view
 from .forms import MenuItemAdminForm, MenuItemCreationAdminForm, MenuItemCreationForm, MenuItemForm
 from .models import MenuItem
 from .utils import save_footer_item_order, save_main_menu_item_order
@@ -32,7 +33,7 @@ def index(request):
 		document = Document.objects.get(id=settings.MAIN_PAGE_ID)
 		return HttpResponseRedirect(reverse(document.get_view_url_name(), args=[document.url_title]))
 
-		md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), 'markdown.extensions.abbr'])
+		md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), 'markdown.extensions.abbr', 'markdown.extensions.tables'])
 		text = md.convert(document.text + abbreviation_explanation_markdown())
 
 		template = 'information_pages_base.html' if document.polymorphic_ctype.model == 'informationdocument' else 'minutes_base.html'
@@ -43,11 +44,27 @@ def index(request):
 			'attachments': document.attachments.filter(no_direct_download=False).order_by('index'),
 			'active_page': 'view',
 			'view_page': True,
-			'permission_warning': permission_warning(request.user, document),
+			'permission_overview': document_permission_overview(request.user, document),
 		})
 	except ObjectDoesNotExist:
 		# nobody created a mainpage yet -> show default main page
 		return render(request, 'index.html')
+
+
+def view(request, title):
+	if Document.objects.filter(url_title=title).exists():
+		return document_view(request, title)
+	if Shortlink.objects.filter(url_title=title).exists():
+		return shortlink_view(request, title)
+	raise Http404
+
+
+def edit(request, title):
+	if Document.objects.filter(url_title=title).exists():
+		return document_edit(request, title)
+	if Shortlink.objects.filter(url_title=title).exists():
+		return shortlink_edit(request, title)
+	raise Http404
 
 
 def menu_items_index(request):
@@ -57,7 +74,10 @@ def menu_items_index(request):
 	main_menu_items = []
 	footer_items = []
 
-	items = [item for item in MenuItem.objects.filter(menu_type=MenuItem.MAIN_MENU, parent=None).order_by('order') if item.can_view_in_list(request.user)]
+	items = find_root_menu_items(
+		[item for item in MenuItem.objects.filter(menu_type=MenuItem.MAIN_MENU, children=None).order_by('order') if item.can_view_in_list(request.user)]
+	)
+
 	for item in items:
 		subitems = MenuItem.objects.filter(menu_type=MenuItem.MAIN_MENU, parent=item).order_by('order')
 		if subitems:

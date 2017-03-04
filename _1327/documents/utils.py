@@ -6,7 +6,6 @@ from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 from django.utils import timezone
-from guardian.utils import get_anonymous_user
 from reversion import revisions
 
 from _1327.documents.forms import AttachmentForm, DocumentForm
@@ -42,6 +41,10 @@ def handle_edit(request, document, formset=None, initial=None):
 			cleaned_data = form.cleaned_data
 
 			document.url_title = cleaned_data['url_title']
+
+			# remove trailing slash if user tries to set custom url with trailing slash
+			if document.url_title.endswith('/'):
+				document.url_title = document.url_title[:-1]
 
 			# save the document and also save the user and the comment the user added
 			with transaction.atomic(), revisions.create_revision():
@@ -139,15 +142,8 @@ def handle_attachment(request, document):
 	return False, form, None
 
 
-def permission_warning(user, document):
-	anonymous_rights = get_anonymous_user().has_perm(document.view_permission_name, document)
-	edit_rights = user.has_perm(document.edit_permission_name, document)
-	return edit_rights and not anonymous_rights
-
-
 @lru_cache(maxsize=32)
 def get_model_function(content_type, function_name):
-	# TODO add caching strategy?
 	module = __import__('_1327.{content_type}.views'.format(content_type=content_type.app_label), fromlist=[function_name])
 	return getattr(module, function_name)
 

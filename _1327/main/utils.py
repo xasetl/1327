@@ -1,4 +1,15 @@
+import re
+
+from django.conf import settings
+from django.contrib.auth.models import Group
+from django.core.exceptions import ValidationError
 from django.utils.text import slugify as django_slugify
+from django.utils.translation import ugettext_lazy as _
+
+from guardian.core import ObjectPermissionChecker
+
+
+URL_TITLE_REGEX = re.compile(r'^[a-zA-Z0-9-_\/]*$')
 
 
 def save_main_menu_item_order(main_menu_items, user, parent_id=None):
@@ -45,4 +56,79 @@ def abbreviation_explanation_markdown():
 
 
 def slugify(string):
-	return '/'.join([django_slugify(part) for part in string.split('/')])
+	slug = '/'.join([django_slugify(part) for part in string.split('/')])
+	while slug.endswith('/'):
+		slug = slug[:-1]
+	while '//' in slug:
+		slug = slug.replace('//', '/')
+	return slug
+
+
+def find_root_menu_items(items):
+	# find root menu items by recursively traversing tree bottom-up
+	if len(items) == 0:
+		return []
+
+	real_root_items = set()
+	questionable_root_items = set()
+
+	for item in items:
+		if item.parent is None:
+			real_root_items.add(item)
+		else:
+			questionable_root_items.add(item.parent)
+
+	real_root_items.update(find_root_menu_items(questionable_root_items))
+	return real_root_items
+
+
+def slugify_and_clean_url_title(instance, url_title):
+	from _1327.documents.models import Document
+	from _1327.shortlinks.models import Shortlink
+
+	if URL_TITLE_REGEX.fullmatch(url_title) is None:
+		raise ValidationError(_('Only the following characters are allowed in the URL: a-z, A-Z, 0-9, -, _, /'))
+	url_title = slugify(url_title)
+
+	if any(url_part in settings.FORBIDDEN_URLS for url_part in url_title.split('/')):
+		raise ValidationError(_('The URL contains parts that are not allowed in custom URLs.'))
+	if not instance.url_title == url_title:
+		if Document.objects.filter(url_title=url_title).exists():
+			raise ValidationError(_('This URL is already taken.'))
+		if Shortlink.objects.filter(url_title=url_title).exists():
+			raise ValidationError(_('This URL is already taken.'))
+	return url_title
+
+
+def document_permission_overview(user, document):
+	can_edit = user.has_perm(document.edit_permission_name, document)
+	if not can_edit:
+		return []
+
+	main_groups = [
+		settings.ANONYMOUS_GROUP_NAME,
+		settings.UNIVERSITY_GROUP_NAME,
+		settings.STUDENT_GROUP_NAME,
+		settings.STAFF_GROUP_NAME,
+	]
+	permissions = []
+	for group_name in main_groups:
+		group = Group.objects.get(name=group_name)
+		checker = ObjectPermissionChecker(group)
+		checker.prefetch_perms([document])
+		if checker.has_perm(document.edit_permission_name, document):
+			permissions.append((group.name, "edit"))
+		elif checker.has_perm(document.view_permission_name, document):
+			permissions.append((group.name, "view"))
+		else:
+			permissions.append((group.name, "none"))
+
+	for group in Group.objects.exclude(name__in=main_groups):
+		checker = ObjectPermissionChecker(group)
+		checker.prefetch_perms([document])
+		if checker.has_perm(document.edit_permission_name, document):
+			permissions.append((group.name, "edit"))
+		elif checker.has_perm(document.view_permission_name, document):
+			permissions.append((group.name, "view"))
+
+	return permissions

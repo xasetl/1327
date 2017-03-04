@@ -19,6 +19,53 @@ table.diff {
 }
 // End fix.
 
+// Table CSS copied from bootstrap to enable nice table rendering in markdown
+.content table {
+	width: 100%;
+	max-width: 100%;
+	margin-bottom: @line-height-computed;
+	// Cells
+	> thead,
+	> tbody,
+	> tfoot {
+		> tr {
+			> th,
+			> td {
+				padding: @table-cell-padding;
+				line-height: @line-height-base;
+				vertical-align: top;
+				border-top: 1px solid @table-border-color;
+			}
+		}
+	}
+	// Bottom align for column headings
+	> thead > tr > th {
+		vertical-align: bottom;
+		border-bottom: 2px solid @table-border-color;
+	}
+	// Remove top border from thead by default
+	> caption + thead,
+	> colgroup + thead,
+	> thead:first-child {
+		> tr:first-child {
+			> th,
+			> td {
+				border-top: 0;
+			}
+		}
+	}
+	// Account for multiple tbody instances
+	> tbody + tbody {
+		border-top: 2px solid @table-border-color;
+	}
+
+	// Nesting
+	.table {
+		background-color: @body-bg;
+	}
+}
+// end of Bootstrap table CSS
+
 html {
 	height: 100%;
 }
@@ -41,6 +88,46 @@ h5 {
 }
 h6 {
 	font-size: 15px;
+}
+
+.text-red {
+	color: @hpi-red;
+}
+.text-orange {
+	color: @hpi-orange;
+}
+.text-yellow {
+	color: @hpi-yellow;
+}
+.text-gray {
+	color: @hpi-gray;
+}
+.text-blue {
+	color: @hpi-blue;
+}
+.text-green {
+	color: @green;
+}
+
+.permission-icons {
+	text-align: center;
+}
+.permission-icon-more {
+	.text-gray;
+	padding-left: 10px;
+}
+.permission-icon-edit {
+	.text-blue;
+}
+.permission-icon-view {
+	.text-green;
+}
+.permission-icon-none {
+	.text-red;
+}
+
+a {
+	cursor: pointer;
 }
 
 ::selection {
@@ -95,9 +182,11 @@ div#wrapper {
 		width: 1170px;
 	}
 }
-.nav > li > a {
-	padding-top: 15px;
-	padding-bottom: 15px;
+.nav > li > a,
+.nav > li > span {
+	padding: 15px;
+	color: @gray-lighter;
+	line-height: 20px;
 }
 .navbar-nav > li > a.navbar-brand {
 	padding: 0;
@@ -108,24 +197,21 @@ div#wrapper {
 .brand > a {
 	height: 50px;
 }
-.login-button:hover a.login-link span {
-	display: none;
-}
-.login-button:hover a.login-link:after {
-	content: 'Login';
-}
-.login-button.active:hover a.login-link:after {
-	content: 'Logout';
+
+.config-menu{
+	text-align: center;
+	width: 50px;
 }
 
 .header-line-gradient {
 	height: 5px;
 	background-color: @gray-dark;
 }
-.header-line-breadcrumbs {
-	color: @hpi-yellow;
+.header-line-subheader {
+	color: @gray-lighter;
 	background-color: @gray-dark;
-	min-height: 5px;
+	font-size: 10pt;
+	overflow: auto;
 }
 .footer-line {
 	height: 3px;
@@ -136,6 +222,28 @@ div#wrapper {
 }
 .gradient.gradient-inv {
 	#gradient.horizontal-three-colors(@hpi-yellow, @hpi-orange, 50%, @hpi-red);
+}
+.breadcrumb-area {
+	display: inline-block;
+}
+.login-area {
+	display: inline-block;
+}
+.login-info {
+	display: inline-block;
+	padding: 3px 10px 3px 10px;
+}
+.login-button {
+	display: inline-block;
+	width: 50px;
+	height: 25px;
+	text-align: center;
+	color: @gray-lighter;
+	padding: 3px 0;
+	&:hover,
+	&:focus {
+		background-color: @gray;
+	}
 }
 
 .navbar-collapse-menu {
@@ -190,6 +298,18 @@ div#wrapper {
 .dropdown:hover .dropdown-menu {
 	display: block;
 }
+nav .dropdown-menu {
+	display: block;
+	visibility: hidden;
+	transition-delay: 0.2s;
+}
+nav li:hover > .dropdown-menu {
+	visibility: visible;
+	transition-delay: 0.2s;
+}
+.menu-level-2 .menu-hover > a {
+	background-color: @gray-dark;
+}
 .dropdown {
 	z-index: 999999;
 }
@@ -243,9 +363,9 @@ div#wrapper {
 }
 
 ul.breadcrumbs {
-	font-size: 10pt;
-	padding: 5px 0 5px 20px;
+	color: @hpi-yellow;
 	margin: 0;
+	padding: 3px 0 3px 20px;
 	li {
 		display: inline-block;
 		&:before {
@@ -258,6 +378,7 @@ ul.breadcrumbs {
 		.glyphicon {
 			font-size: 8pt;
 		}
+		padding-right: 3px;
 	}
 	a {
 		color: @gray-lighter;

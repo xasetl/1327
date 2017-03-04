@@ -1,6 +1,8 @@
 import json
 import os
 
+from channels import Group as WebsocketGroup
+
 from django.contrib import messages
 from django.contrib.admin.utils import NestedObjects
 from django.contrib.auth.models import Group
@@ -21,14 +23,15 @@ from reversion import revisions
 from sendfile import sendfile
 
 from _1327 import settings
+from _1327.documents.consumers import get_group_name
 from _1327.documents.forms import get_permission_form
 from _1327.documents.markdown_internal_link_extension import InternalLinksMarkdownExtension
 from _1327.documents.models import Attachment, Document, TemporaryDocumentText
 from _1327.documents.utils import delete_cascade_to_json, delete_old_empty_pages, get_model_function, get_new_autosaved_pages_for_user, \
-	handle_attachment, handle_autosave, handle_edit, permission_warning, prepare_versions
+	handle_attachment, handle_autosave, handle_edit, prepare_versions
 from _1327.information_pages.models import InformationDocument
 from _1327.information_pages.forms import InformationDocumentForm  # noqa
-from _1327.main.utils import abbreviation_explanation_markdown
+from _1327.main.utils import abbreviation_explanation_markdown, document_permission_overview
 from _1327.minutes.models import MinutesDocument
 from _1327.minutes.forms import MinutesDocumentForm  # noqa
 from _1327.polls.models import Poll
@@ -103,7 +106,7 @@ def edit(request, title, new_autosaved_pages=None, initial=None):
 			'active_page': 'edit',
 			'creation': document.is_in_creation,
 			'new_autosaved_pages': new_autosaved_pages,
-			'permission_warning': permission_warning(request.user, document),
+			'permission_overview': document_permission_overview(request.user, document),
 			'supported_image_types': settings.SUPPORTED_IMAGE_TYPES,
 			'formset': formset,
 		})
@@ -119,7 +122,14 @@ def autosave(request, title):
 		pass
 
 	handle_autosave(request, document)
-	return HttpResponse()
+
+	data = {
+		'preview_url': request.build_absolute_uri(
+			reverse('documents:preview') + '?hash_value=' + document.hash_value
+		)
+	}
+
+	return HttpResponse(json.dumps(data))
 
 
 def versions(request, title):
@@ -134,7 +144,7 @@ def versions(request, title):
 		'active_page': 'versions',
 		'versions': document_versions,
 		'document': document,
-		'permission_warning': permission_warning(request.user, document),
+		'permission_overview': document_permission_overview(request.user, document),
 		'can_be_reverted': document.can_be_reverted,
 	})
 
@@ -150,7 +160,7 @@ def view(request, title):
 	except (ImportError, AttributeError):
 		pass
 
-	md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), InternalLinksMarkdownExtension(), 'markdown.extensions.abbr'])
+	md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), InternalLinksMarkdownExtension(), 'markdown.extensions.abbr', 'markdown.extensions.tables'])
 	text = md.convert(document.text + abbreviation_explanation_markdown())
 
 	return render(request, 'documents_base.html', {
@@ -160,7 +170,7 @@ def view(request, title):
 		'attachments': document.attachments.filter(no_direct_download=False).order_by('index'),
 		'active_page': 'view',
 		'view_page': True,
-		'permission_warning': permission_warning(request.user, document),
+		'permission_overview': document_permission_overview(request.user, document),
 	})
 
 
@@ -191,7 +201,7 @@ def permissions(request, title):
 		'formset_header': PermissionForm.header(content_type),
 		'formset': formset,
 		'active_page': 'permissions',
-		'permission_warning': permission_warning(request.user, document),
+		'permission_overview': document_permission_overview(request.user, document),
 	})
 
 
@@ -222,7 +232,7 @@ def attachments(request, title):
 			'form': form,
 			'attachments': document.attachments.all().order_by('index'),
 			'active_page': 'attachments',
-			'permission_warning': permission_warning(request.user, document),
+			'permission_overview': document_permission_overview(request.user, document),
 		})
 
 
@@ -235,8 +245,13 @@ def render_text(request, title):
 		check_permissions(document, request.user, [document.view_permission_name, document.edit_permission_name])
 
 	text = request.POST['text']
-	md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), InternalLinksMarkdownExtension(), 'markdown.extensions.abbr'])
+	md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), InternalLinksMarkdownExtension(), 'markdown.extensions.abbr', 'markdown.extensions.tables'])
 	text = md.convert(text + abbreviation_explanation_markdown())
+
+	WebsocketGroup(get_group_name(document.hash_value)).send({
+		'text': text
+	})
+
 	return HttpResponse(text, content_type='text/plain')
 
 
@@ -356,9 +371,14 @@ def download_attachment(request):
 		raise PermissionDenied
 
 	filename = os.path.join(settings.MEDIA_ROOT, attachment.file.name)
+	extension = os.path.splitext(filename)[1]
 	is_attachment = not request.GET.get('embed', None)
 
-	return sendfile(request, filename, attachment=is_attachment, attachment_filename=attachment.displayname)
+	attachment_filename = attachment.displayname
+	if not attachment_filename.endswith(extension):
+		attachment_filename += extension
+
+	return sendfile(request, filename, attachment=is_attachment, attachment_filename=attachment_filename)
 
 
 def update_attachment_order(request):
@@ -397,18 +417,21 @@ def get_attachments(request, document_id):
 	return HttpResponse(json.dumps(data))
 
 
-def change_attachment_no_direct_download(request):
+def change_attachment(request):
 	if not request.POST or not request.is_ajax():
 		raise Http404
 
-	attachment_id = request.POST['id']
-	no_direct_download = json.loads(request.POST['no_direct_download'])
+	attachment_id = request.POST.get('id', None)
+	if attachment_id is None:
+		raise SuspiciousOperation
 
-	attachment = Attachment.objects.get(pk=attachment_id)
+	attachment = Attachment.objects.get(id=attachment_id)
 	if not attachment.document.can_be_changed_by(request.user):
 		raise PermissionDenied
 
-	attachment.no_direct_download = no_direct_download
+	no_direct_download_value = request.POST.get('no_direct_download', None)
+	attachment.no_direct_download = json.loads(no_direct_download_value) if no_direct_download_value is not None else attachment.no_direct_download
+	attachment.displayname = request.POST.get('displayname', attachment.displayname)
 	attachment.save()
 	return HttpResponse()
 
@@ -438,3 +461,25 @@ def get_delete_cascade(request, title):
 		simplified_delete_cascade.append(cascade_item)
 
 	return HttpResponse(json.dumps(delete_cascade_to_json(simplified_delete_cascade)))
+
+
+def preview(request):
+	if not request.GET or request.method != 'GET':
+		raise Http404
+
+	hash_value = request.GET['hash_value']
+	document = get_object_or_404(Document, hash_value=hash_value)
+
+	md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), InternalLinksMarkdownExtension(), 'markdown.extensions.abbr', 'markdown.extensions.tables'])
+	text = md.convert(document.text + abbreviation_explanation_markdown())
+
+	return render(
+		request,
+		'documents_preview.html',
+		{
+			'title': document.title,
+			'text': text,
+			'preview_url': settings.PREVIEW_URL,
+			'hash_value': hash_value,
+		}
+	)

@@ -33,6 +33,7 @@ FORBIDDEN_URLS = [
 	"admin", "login", "logout", "documents", "information_pages", "minutes", "polls", "list", "view_as", "abbreviation_explanation",
 	"menu_items", "menu_item_delete", "menu_item", "create", "edit", "delete", "update_order", "hijack", "unlinked", "revert", "search", "download",
 	"update", "attachment", "no-direct-download", "autosave", "publish", "render", "delete-cascade", "versions", "permissions", "attachments",
+	"shortlink", "shortlinks",
 ]
 
 ANONYMOUS_GROUP_NAME = "Anonymous"
@@ -70,15 +71,18 @@ INSTALLED_APPS = [
 	'django_extensions',
 	'hijack',
 	'compat',
+	'channels',
 	'_1327.main',
 	'_1327.user_management',
 	'_1327.documents',
 	'_1327.information_pages',
 	'_1327.minutes',
 	'_1327.polls',
+	'_1327.shortlinks'
 ]
 
 MIDDLEWARE_CLASSES = [
+	'_1327.main.middleware.RedirectToNoSlash',
 	'django.contrib.sessions.middleware.SessionMiddleware',
 	'django.middleware.common.CommonMiddleware',
 	'django.middleware.csrf.CsrfViewMiddleware',
@@ -112,6 +116,7 @@ BOOTSTRAP3 = {
 DAB_FIELD_RENDERER = 'django_admin_bootstrapped.renderers.BootstrapFieldRenderer'
 
 ROOT_URLCONF = '_1327.urls'
+APPEND_SLASH = False
 
 WSGI_APPLICATION = '_1327.wsgi.application'
 
@@ -125,6 +130,14 @@ DATABASES = {
 		'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
 	}
 }
+
+CHANNEL_LAYERS = {
+	"default": {
+		"BACKEND": "asgiref.inmemory.ChannelLayer",
+		"ROUTING": "_1327.routing.channel_routing",
+	},
+}
+PREVIEW_URL = '/ws/preview'
 
 # Internationalization
 # https://docs.djangoproject.com/en/1.6/topics/i18n/

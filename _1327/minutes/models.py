@@ -3,11 +3,11 @@ from datetime import date, datetime
 from django.conf import settings
 from django.contrib.auth.models import Group
 from django.core.exceptions import SuspiciousOperation
-from django.core.urlresolvers import reverse
 from django.db import models
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.template import loader
+from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _, ungettext_lazy
 from guardian.shortcuts import assign_perm
 from reversion import revisions
@@ -52,8 +52,8 @@ class MinutesDocument(Document):
 
 	date = models.DateField(default=datetime.now, verbose_name=_("Date"))
 	state = models.IntegerField(choices=CHOICES, default=UNPUBLISHED, verbose_name=_("State"))
-	moderator = models.ForeignKey(UserProfile, related_name='moderations', verbose_name=_("Moderator"), blank=True, null=True)
-	author = models.ForeignKey(UserProfile, related_name='documents')
+	moderator = models.ForeignKey(UserProfile, on_delete=models.PROTECT, related_name='moderations', verbose_name=_("Moderator"), blank=True, null=True)
+	author = models.ForeignKey(UserProfile, on_delete=models.PROTECT, related_name='documents')
 	participants = models.ManyToManyField(UserProfile, related_name='participations', verbose_name=_("Participants"))
 	labels = models.ManyToManyField(MinutesLabel, related_name="minutes", blank=True)
 
@@ -122,8 +122,7 @@ class MinutesDocument(Document):
 
 	@property
 	def meta_information_html(self):
-		template = loader.get_template('minutes_meta_information.html')
-		return template.render({'document': self})
+		return loader.get_template('minutes_meta_information.html')
 
 	def save_formset(self, formset):
 		guests = formset.save(commit=False)
@@ -162,4 +161,4 @@ def update_permissions(sender, instance, **kwargs):
 
 class Guest(models.Model):
 	name = models.CharField(max_length=255, verbose_name=_('Name'))
-	minute = models.ForeignKey(MinutesDocument, related_name='guests', verbose_name=_("Guests"))
+	minute = models.ForeignKey(MinutesDocument, on_delete=models.CASCADE, related_name='guests', verbose_name=_("Guests"))

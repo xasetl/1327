@@ -2,7 +2,7 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth.models import Group, Permission
 from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.forms import BaseInlineFormSet
 from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext_lazy as _
@@ -12,21 +12,9 @@ from _1327.main.utils import slugify_and_clean_url_title
 from .models import Attachment, Document
 
 
-class StrippedCharField(forms.CharField):
-	"""
-		CharField that saves trimmed strings
-	"""
-
-	def to_python(self, value):
-		super(StrippedCharField, self).to_python(value)
-		if value is None:
-			return None
-		return value.strip()
-
-
 class DocumentForm(forms.ModelForm):
-	url_title = StrippedCharField(label=_('URL'), max_length=255, required=True)
-	comment = StrippedCharField(label=_('Comment'), max_length=255, required=False)
+	url_title = forms.CharField(label=_('URL'), max_length=255, required=True)
+	comment = forms.CharField(label=_('Comment'), max_length=255, required=False)
 	group = forms.ModelChoiceField(Group.objects.all(), label=_('Edit permissions'), disabled=False, required=True)
 
 	class Meta:
@@ -38,15 +26,21 @@ class DocumentForm(forms.ModelForm):
 		creation = kwargs.pop('creation', None)
 		super().__init__(*args, **kwargs)
 		staff = Group.objects.get(name=settings.STAFF_GROUP_NAME)
-		self.user_groups = user.groups.all()
+
+		self.user_groups = user.groups.exclude(name__in=settings.GROUPS_HIDDEN_DURING_CREATION)
+		if self.user_groups.count() == 0:
+			# The user should not be able to view that page, as he is not in any group that might be able to create
+			# content
+			raise PermissionDenied
+
 		self.fields['group'].queryset = self.user_groups
+		self.fields['group'].widget.attrs['class'] = 'select2-selection'
 		if creation:
-			if staff in self.user_groups and not self.fields['group'].initial:
-				self.fields['group'].initial = staff
-				self.fields['group'].widget.attrs['class'] = 'select2-selection'
-			elif len(self.user_groups) == 1:
+			if len(self.user_groups) == 1:
 				self.fields['group'].initial = self.user_groups[0]
 				self.fields['group'].widget = forms.HiddenInput()
+			elif staff in self.user_groups and not self.fields['group'].initial:
+				self.fields['group'].initial = staff
 		else:
 			self.fields['group'].widget = forms.HiddenInput()
 			self.fields['group'].required = False
@@ -164,7 +158,7 @@ def get_permission_form(document):
 
 
 class AttachmentForm(forms.ModelForm):
-	displayname = StrippedCharField(max_length=255, required=False)
+	displayname = forms.CharField(max_length=255, required=False)
 
 	class Meta:
 		model = Attachment

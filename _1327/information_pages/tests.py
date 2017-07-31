@@ -1,23 +1,27 @@
+from django.conf import settings
 from django.contrib.auth.models import Group
-from django.core.urlresolvers import reverse
 from django.db import transaction
 from django.test import TestCase
+from django.urls import reverse
 from django_webtest import WebTest
 from guardian.shortcuts import assign_perm, get_perms_for_model, remove_perm
 from guardian.utils import get_anonymous_user
 from model_mommy import mommy
 from reversion import revisions
+from reversion.models import Version
 
 from _1327.documents.models import Document
 from _1327.information_pages.models import InformationDocument
+from _1327.main.models import MenuItem
 from _1327.main.utils import slugify
 from _1327.user_management.models import UserProfile
 
 
 class TestDocument(TestCase):
 
-	def setUp(self):
-		self.user = mommy.make(UserProfile)
+	@classmethod
+	def setUpTestData(cls):
+		cls.user = mommy.make(UserProfile)
 
 	def test_slugification(self):
 		document = InformationDocument(title="titlea", text="text")
@@ -32,8 +36,9 @@ class TestDocument(TestCase):
 
 class TestDocumentWeb(WebTest):
 
-	def setUp(self):
-		self.user = mommy.make(UserProfile)
+	@classmethod
+	def setUpTestData(cls):
+		cls.user = mommy.make(UserProfile)
 
 	def test_url_shows_document(self):
 		title = "Document title"
@@ -53,10 +58,12 @@ class TestEditor(WebTest):
 	csrf_checks = False
 	extra_environ = {'HTTP_ACCEPT_LANGUAGE': 'en'}
 
-	def setUp(self):
-		self.user = mommy.make(UserProfile, is_superuser=True)
-		self.document = mommy.make(InformationDocument)
-		self.document.set_all_permissions(mommy.make(Group))
+	@classmethod
+	def setUpTestData(cls):
+		cls.user = mommy.make(UserProfile, is_superuser=True)
+		cls.user.groups.add(Group.objects.get(name=settings.STAFF_GROUP_NAME))
+		cls.document = mommy.make(InformationDocument)
+		cls.document.set_all_permissions(mommy.make(Group))
 
 	def test_get_editor(self):
 		user_without_perms = mommy.make(UserProfile)
@@ -107,6 +114,7 @@ class TestEditor(WebTest):
 
 	def test_editor_permissions_for_single_user(self):
 		test_user = mommy.make(UserProfile)
+		test_user.groups.add(Group.objects.get(name=settings.STAFF_GROUP_NAME))
 
 		assign_perm(InformationDocument.VIEW_PERMISSION_NAME, test_user, self.document)
 
@@ -143,15 +151,17 @@ class TestEditor(WebTest):
 class TestVersions(WebTest):
 	csrf_checks = False
 
-	def setUp(self):
-		self.user = mommy.make(UserProfile, is_superuser=True)
+	@classmethod
+	def setUpTestData(cls):
+		cls.user = mommy.make(UserProfile, is_superuser=True)
+		cls.user.groups.add(Group.objects.get(name=settings.STAFF_GROUP_NAME))
 
-		self.document = mommy.prepare(InformationDocument)
+		cls.document = mommy.prepare(InformationDocument)
 		with transaction.atomic(), revisions.create_revision():
-			self.document.save()
-			revisions.set_user(self.user)
+			cls.document.save()
+			revisions.set_user(cls.user)
 			revisions.set_comment('test version')
-		self.document.set_all_permissions(mommy.make(Group))
+		cls.document.set_all_permissions(mommy.make(Group))
 
 	def test_get_version_page(self):
 		user_without_perms = mommy.make(UserProfile)
@@ -167,7 +177,7 @@ class TestVersions(WebTest):
 
 	def test_save_version(self):
 		# first get all current versions of the document from the database
-		versions = revisions.get_for_object(self.document)
+		versions = Version.objects.get_for_object(self.document)
 		self.assertEqual(len(versions), 1)
 
 		# get the editor page and add a new revision
@@ -183,7 +193,7 @@ class TestVersions(WebTest):
 		self.assertEqual(response.status_code, 200)
 
 		# check whether number of versions increased
-		versions = revisions.get_for_object(self.document)
+		versions = Version.objects.get_for_object(self.document)
 		self.assertEqual(len(versions), 2)
 
 		# check whether the comment of the version correct
@@ -193,14 +203,16 @@ class TestVersions(WebTest):
 
 class TestPermissions(WebTest):
 
-	def setUp(self):
-		self.user = mommy.make(UserProfile)
+	@classmethod
+	def setUpTestData(cls):
+		cls.user = mommy.make(UserProfile)
+		cls.user.groups.add(Group.objects.get(name=settings.STAFF_GROUP_NAME))
 
-		self.group = mommy.make(Group, make_m2m=True)
+		cls.group = mommy.make(Group, make_m2m=True)
 		for permission in get_perms_for_model(InformationDocument):
 			permission_name = "{}.{}".format(permission.content_type.app_label, permission.codename)
-			assign_perm(permission_name, self.group)
-		self.group.save()
+			assign_perm(permission_name, cls.group)
+		cls.group.save()
 
 		mommy.make(InformationDocument)
 
@@ -301,10 +313,18 @@ class TestPermissions(WebTest):
 		assign_perm('information_pages.add_informationdocument', anonymous_user)
 		assign_perm('information_pages.change_informationdocument', anonymous_user)
 
+		# it should still not work
+		response = self.app.get(reverse('documents:create', args=['informationdocument']), user=anonymous_user, status=403)
+		self.assertEqual(response.status_code, 403)
+
+		# the user also needs to be in a group that allows him to create documents
+		anonymous_user.groups.add(Group.objects.get(name=settings.STAFF_GROUP_NAME))
+
 		# it should work now
 		response = self.app.get(reverse('documents:create', args=['informationdocument']), user=anonymous_user)
 		self.assertEqual(response.status_code, 200)
 
+		anonymous_user.groups.remove(Group.objects.get(name=settings.STAFF_GROUP_NAME))
 		remove_perm('information_pages.add_informationdocument', anonymous_user)
 		remove_perm('information_pages.change_informationdocument', anonymous_user)
 
@@ -323,8 +343,9 @@ class TestPermissions(WebTest):
 class TestNewPage(WebTest):
 	csrf_checks = False
 
-	def setUp(self):
-		self.user = mommy.make(UserProfile, is_superuser=True)
+	@classmethod
+	def setUpTestData(cls):
+		cls.user = mommy.make(UserProfile, is_superuser=True)
 
 	def test_save_new_page(self):
 		# get the editor page and save the site
@@ -347,7 +368,7 @@ class TestNewPage(WebTest):
 		document = InformationDocument.objects.get(title=text)
 
 		# check whether number of versions is correct
-		versions = revisions.get_for_object(document)
+		versions = Version.objects.get_for_object(document)
 		self.assertEqual(len(versions), 1)
 
 		# check whether the properties of the new document are correct
@@ -408,3 +429,26 @@ class TestNewPage(WebTest):
 
 		form = response.forms[0]
 		self.assertFalse("Hidden" in str(form.fields['group'][0]))
+
+
+class TestUnlinkedList(WebTest):
+
+	@classmethod
+	def setUpTestData(cls):
+		cls.user = mommy.make(UserProfile, is_superuser=True)
+		cls.informationdocument1 = mommy.make(InformationDocument)
+		cls.informationdocument2 = mommy.make(InformationDocument, text="Lorem ipsum [link](document:{}).".format(cls.informationdocument1.id))
+		cls.menu_item = mommy.make(MenuItem, document=cls.informationdocument2)
+
+	def test_url_shows_document(self):
+		self.assertTrue(self.informationdocument2.menu_items.count() > 0)
+		self.assertEqual(self.informationdocument1.menu_items.count(), 0)
+
+		response = self.app.get(reverse('information_pages:unlinked_list'), user=self.user)
+		self.assertIn(self.informationdocument1.title.encode("utf-8"), response.body, msg="The displayed page should contain the unlinked document's title")
+
+		self.informationdocument2.is_menu_page = True
+		self.informationdocument2.save()
+
+		response = self.app.get(reverse('information_pages:unlinked_list'), user=self.user)
+		self.assertNotIn(self.informationdocument1.title.encode("utf-8"), response.body, msg="The displayed page should not contain the document's title")

@@ -6,14 +6,17 @@ class d1327 ($db_connector) {
     } -> exec { 'django-migrate':
         provider    => shell,
         command     => 'python3 manage.py migrate --noinput',
+        user        => 'vagrant',
         cwd         => '/vagrant'
     } -> exec { 'django-collectstatic':
         provider    => shell,
         command     => 'python3 manage.py collectstatic --noinput',
+        user        => 'vagrant',
         cwd         => '/vagrant'
-    } -> exec { '1327-flush-db':
+    } -> exec { 'django-compilemessages':
         provider    => shell,
-        command     => 'python3 manage.py flush --noinput',
+        command     => 'python3 manage.py compilemessages',
+        user        => 'vagrant',
         cwd         => '/vagrant'
     }
 }

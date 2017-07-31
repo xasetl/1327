@@ -3,8 +3,8 @@ from django.conf import settings
 from django.contrib.auth.models import Group
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
-from django.core.urlresolvers import NoReverseMatch, reverse
 from django.db.models import Q
+from django.urls import NoReverseMatch, reverse
 from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext_lazy as _
 from guardian.shortcuts import get_objects_for_user, get_perms
@@ -34,13 +34,16 @@ class MenuItemAdminForm(MenuItemForm):
 
 	def clean_link(self):
 		data = self.cleaned_data['link']
-		if data != "":
+		if data is not None:
 			try:
 				split = data.split("?")
 				if len(split) == 1:
 					reverse(split[0])
 				elif len(split) == 2:
-					reverse(split[0], args=split[1])
+					arguments = split[1].split('=')
+					if len(arguments) == 1:
+						raise ValidationError(_('Arguments for links must be provided as keyword arguments.'))
+					reverse(split[0], kwargs={arguments[0]: arguments[1]})
 				else:
 					raise ValidationError(_('This link is not valid.'), code='nonexistent')
 			except NoReverseMatch:
@@ -51,7 +54,7 @@ class MenuItemAdminForm(MenuItemForm):
 		if 'link' in self.cleaned_data and self.cleaned_data['link'] and\
 			'document' in self.cleaned_data and self.cleaned_data['document']:
 			raise ValidationError(_('You are only allowed to define one of document and link'))
-		if ('link' not in self.cleaned_data or self.cleaned_data['link'] == "") and\
+		if ('link' not in self.cleaned_data or self.cleaned_data['link'] is None) and\
 			('document' not in self.cleaned_data or self.cleaned_data['document'] is None):
 			raise ValidationError(_('You must select a document or link'))
 		return self.cleaned_data

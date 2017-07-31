@@ -7,31 +7,29 @@ from django.contrib import messages
 from django.contrib.admin.utils import NestedObjects
 from django.contrib.auth.models import Group
 from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, SuspiciousOperation
-from django.core.urlresolvers import reverse
+from django.core.exceptions import PermissionDenied, SuspiciousOperation
 from django.db import DEFAULT_DB_ALIAS, models, transaction
 from django.forms import formset_factory
 from django.http import HttpResponse, HttpResponseRedirect
-
 from django.shortcuts import get_object_or_404, Http404, render
+from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
 from guardian.shortcuts import get_objects_for_user
+from guardian.utils import get_anonymous_user
 
-import markdown
-from markdown.extensions.toc import TocExtension
 from reversion import revisions
+from reversion.models import Version
 from sendfile import sendfile
 
 from _1327 import settings
 from _1327.documents.consumers import get_group_name
 from _1327.documents.forms import get_permission_form
-from _1327.documents.markdown_internal_link_extension import InternalLinksMarkdownExtension
-from _1327.documents.models import Attachment, Document, TemporaryDocumentText
+from _1327.documents.models import Attachment, Document
 from _1327.documents.utils import delete_cascade_to_json, delete_old_empty_pages, get_model_function, get_new_autosaved_pages_for_user, \
 	handle_attachment, handle_autosave, handle_edit, prepare_versions
 from _1327.information_pages.models import InformationDocument
 from _1327.information_pages.forms import InformationDocumentForm  # noqa
-from _1327.main.utils import abbreviation_explanation_markdown, document_permission_overview
+from _1327.main.utils import convert_markdown, document_permission_overview
 from _1327.minutes.models import MinutesDocument
 from _1327.minutes.forms import MinutesDocumentForm  # noqa
 from _1327.polls.models import Poll
@@ -74,15 +72,6 @@ def edit(request, title, new_autosaved_pages=None, initial=None):
 		# users are only allowed to view autosaved pages if they have the "add" permission for documents
 		check_permissions(document, request.user, [document.add_permission_name])
 
-		try:
-			autosave = TemporaryDocumentText.objects.get(document=document)
-			if autosave.author != request.user:
-				raise PermissionDenied
-		except ObjectDoesNotExist:
-			# There is no autosave linked to this document, this means that the document can be treated as a new
-			# document, hence everyone with add permissions may work with this document
-			pass
-
 	# if the edit form has a formset we will initialize it here
 	formset_factory = document.Form.get_formset_factory()
 	formset = formset_factory(request.POST or None, instance=document) if formset_factory is not None else None
@@ -113,6 +102,9 @@ def edit(request, title, new_autosaved_pages=None, initial=None):
 
 
 def autosave(request, title):
+	if request.user.is_anonymous or request.user == get_anonymous_user():
+		raise PermissionDenied()
+
 	document = None
 	try:
 		document = get_object_or_404(Document, url_title=title)
@@ -160,13 +152,12 @@ def view(request, title):
 	except (ImportError, AttributeError):
 		pass
 
-	md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), InternalLinksMarkdownExtension(), 'markdown.extensions.abbr', 'markdown.extensions.tables'])
-	text = md.convert(document.text + abbreviation_explanation_markdown())
+	text, toc = convert_markdown(document.text)
 
 	return render(request, 'documents_base.html', {
 		'document': document,
 		'text': text,
-		'toc': md.toc,
+		'toc': toc,
 		'attachments': document.attachments.filter(no_direct_download=False).order_by('index'),
 		'active_page': 'view',
 		'view_page': True,
@@ -244,9 +235,7 @@ def render_text(request, title):
 	if document.has_perms():
 		check_permissions(document, request.user, [document.view_permission_name, document.edit_permission_name])
 
-	text = request.POST['text']
-	md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), InternalLinksMarkdownExtension(), 'markdown.extensions.abbr', 'markdown.extensions.tables'])
-	text = md.convert(text + abbreviation_explanation_markdown())
+	text, __ = convert_markdown(request.POST['text'])
 
 	WebsocketGroup(get_group_name(document.hash_value)).send({
 		'text': text
@@ -265,7 +254,7 @@ def search(request):
 	information_documents = get_objects_for_user(request.user, InformationDocument.VIEW_PERMISSION_NAME, klass=InformationDocument.objects.filter(title__icontains=request.GET['q']))
 	polls = get_objects_for_user(request.user, Poll.VIEW_PERMISSION_NAME, klass=Poll.objects.filter(title__icontains=request.GET['q']))
 
-	return render(request, "search_api.json", {
+	return render(request, "ajax_search_api.json", {
 		'minutes': minutes,
 		'information_documents': information_documents,
 		'polls': polls,
@@ -281,7 +270,7 @@ def revert(request):
 	document_url_title = request.POST['url_title']
 	document = get_object_or_404(Document, url_title=document_url_title)
 	check_permissions(document, request.user, [document.edit_permission_name])
-	versions = revisions.get_for_object(document)
+	versions = Version.objects.get_for_object(document)
 
 	if not document.can_be_reverted:
 		raise SuspiciousOperation('This Document can not be reverted!')
@@ -299,7 +288,7 @@ def revert(request):
 
 	revert_version.revision.revert(delete=False)
 	fields = revert_version.field_dict
-	document_class = ContentType.objects.get_for_id(fields.pop('polymorphic_ctype')).model_class()
+	document_class = ContentType.objects.get_for_id(fields.pop('polymorphic_ctype_id')).model_class()
 
 	# Remove all references to parent objects, rename ForeignKeyFields, extract ManyToManyFields.
 	new_fields = fields.copy()
@@ -308,13 +297,17 @@ def revert(request):
 		if "_ptr" in key:
 			del new_fields[key]
 			continue
-		if hasattr(document_class, key):
+
+		try:
 			field = getattr(document_class, key).field
-			if isinstance(field, models.ManyToManyField):
-				many_to_many_fields[key] = fields[key]
-			else:
-				new_fields[field.attname] = fields[key]
-			del new_fields[key]
+		except AttributeError:
+			continue
+
+		if isinstance(field, models.ManyToManyField):
+			many_to_many_fields[key] = fields[key]
+		else:
+			new_fields[field.attname] = fields[key]
+		del new_fields[key]
 
 	reverted_document = document_class(**new_fields)
 	with transaction.atomic(), revisions.create_revision():
@@ -470,8 +463,7 @@ def preview(request):
 	hash_value = request.GET['hash_value']
 	document = get_object_or_404(Document, hash_value=hash_value)
 
-	md = markdown.Markdown(safe_mode='escape', extensions=[TocExtension(baselevel=2), InternalLinksMarkdownExtension(), 'markdown.extensions.abbr', 'markdown.extensions.tables'])
-	text = md.convert(document.text + abbreviation_explanation_markdown())
+	text, __ = convert_markdown(document.text)
 
 	return render(
 		request,

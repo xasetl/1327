@@ -10,7 +10,9 @@ https://docs.djangoproject.com/en/1.6/ref/settings/
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 from datetime import timedelta
+import logging
 import os
+import sys
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "_1327")
 
@@ -27,19 +29,35 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
+# The page URL that is used in email templates
+PAGE_URL = "localhost:8000"
+
+
+# People who receive emails on errors
+ADMINS = [
+	# ('Your Name', 'your_email@example.com'),
+]
+
+
 DELETE_EMPTY_PAGE_AFTER = timedelta(hours=1)
 
 FORBIDDEN_URLS = [
 	"admin", "login", "logout", "documents", "information_pages", "minutes", "polls", "list", "view_as", "abbreviation_explanation",
 	"menu_items", "menu_item_delete", "menu_item", "create", "edit", "delete", "update_order", "hijack", "unlinked", "revert", "search", "download",
 	"update", "attachment", "no-direct-download", "autosave", "publish", "render", "delete-cascade", "versions", "permissions", "attachments",
-	"shortlink", "shortlinks",
+	"shortlink", "shortlinks", "preview", "get", "change", "autosave", "ws",
 ]
 
 ANONYMOUS_GROUP_NAME = "Anonymous"
 STAFF_GROUP_NAME = "Staff"
 STUDENT_GROUP_NAME = "Student"
 UNIVERSITY_GROUP_NAME = "University Network"
+
+GROUPS_HIDDEN_DURING_CREATION = [
+	ANONYMOUS_GROUP_NAME,
+	STUDENT_GROUP_NAME,
+	UNIVERSITY_GROUP_NAME,
+]
 
 DEFAULT_USER_GROUP_NAME = ""  # if a name is set, all new users are automatically added to this group
 
@@ -51,6 +69,9 @@ ANONYMOUS_IP_RANGE_GROUPS = {
 
 MINUTES_URL_NAME = "minutes"
 POLLS_URL_NAME = "polls"
+
+# number of days after which a reminder for unpublished minutes documents is sent
+MINUTES_PUBLISH_REMINDER_DAYS = 6
 
 
 # Application definition
@@ -81,9 +102,10 @@ INSTALLED_APPS = [
 	'_1327.shortlinks'
 ]
 
-MIDDLEWARE_CLASSES = [
+MIDDLEWARE = [
 	'_1327.main.middleware.RedirectToNoSlash',
 	'django.contrib.sessions.middleware.SessionMiddleware',
+	'django.contrib.auth.middleware.SessionAuthenticationMiddleware',
 	'django.middleware.common.CommonMiddleware',
 	'django.middleware.csrf.CsrfViewMiddleware',
 	'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -138,6 +160,13 @@ CHANNEL_LAYERS = {
 	},
 }
 PREVIEW_URL = '/ws/preview'
+
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+EMAIL_HOST = ''
+EMAIL_PORT = '25'
+DEFAULT_FROM_EMAIL = 'noreply@example.com'
+SERVER_EMAIL = 'noreply@example.com'
+
 
 # Internationalization
 # https://docs.djangoproject.com/en/1.6/topics/i18n/
@@ -235,6 +264,13 @@ STATIC_PRECOMPILER_COMPILERS = [
 
 # Set this to the ID of the document that shall be shown as Main Page
 MAIN_PAGE_ID = -1
+
+TESTING = 'test' in sys.argv
+
+if TESTING:
+	DATABASES['default'] = {'ENGINE': 'django.db.backends.sqlite3'}  # use sqlite to speed tests up
+	logging.disable(logging.CRITICAL)  # disable logging, primarily to prevent console spam
+
 
 # Create a localsettings.py to override settings per machine or user, e.g. for
 # development or different settings in deployments using multiple servers.

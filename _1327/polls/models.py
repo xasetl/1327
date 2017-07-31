@@ -1,10 +1,10 @@
 from datetime import date, datetime
 
 from django.contrib.contenttypes.models import ContentType
-from django.core.urlresolvers import reverse
 from django.db import models
 from django.db.models import Sum
 from django.template import loader
+from django.urls import reverse
 from django.utils.translation import ugettext_lazy as _
 from guardian.shortcuts import assign_perm
 
@@ -115,8 +115,7 @@ class Poll(Document):
 
 	@property
 	def meta_information_html(self):
-		template = loader.get_template('polls_meta_information.html')
-		return template.render({'document': self})
+		return loader.get_template('polls_meta_information.html')
 
 	def handle_edit(self, cleaned_data):
 		content_type = ContentType.objects.get_for_model(self)
@@ -125,12 +124,19 @@ class Poll(Document):
 			assign_perm("{app}.view_{model}".format(app=content_type.app_label, model=content_type.model), group, self)
 			assign_perm("{app}.vote_{model}".format(app=content_type.app_label, model=content_type.model), group, self)
 
+	@property
+	def has_choice_descriptions(self):
+		for choice in self.choices.all():
+			if choice.description:
+				return True
+		return False
+
 
 revisions.register(Poll, follow=["document_ptr"])
 
 
 class Choice(models.Model):
-	poll = models.ForeignKey(Poll, related_name="choices")
+	poll = models.ForeignKey(Poll, on_delete=models.CASCADE, related_name="choices")
 	text = models.CharField(max_length=255)
 	description = models.TextField(default="", blank=True)
 	votes = models.IntegerField(default=0)

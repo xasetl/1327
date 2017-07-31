@@ -1,11 +1,11 @@
 from django.conf import settings
 from django.contrib.auth.models import Group
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django_webtest import WebTest
 from guardian.core import ObjectPermissionChecker
 from guardian.shortcuts import assign_perm
 from model_mommy import mommy
-from reversion import revisions
+from reversion.models import Version
 
 from _1327.main.utils import slugify
 from _1327.minutes.models import MinutesDocument
@@ -15,14 +15,16 @@ from _1327.user_management.models import UserProfile
 class TestEditor(WebTest):
 	csrf_checks = False
 
-	def setUp(self):
+	@classmethod
+	def setUpTestData(cls):
 		num_participants = 8
 
-		self.user = mommy.make(UserProfile, is_superuser=True)
-		self.moderator = mommy.make(UserProfile)
-		self.participants = mommy.make(UserProfile, _quantity=num_participants)
-		self.document = mommy.make(MinutesDocument, participants=self.participants, moderator=self.moderator)
-		self.document.set_all_permissions(mommy.make(Group))
+		cls.user = mommy.make(UserProfile, is_superuser=True)
+		cls.user.groups.add(Group.objects.get(name=settings.STAFF_GROUP_NAME))
+		cls.moderator = mommy.make(UserProfile)
+		cls.participants = mommy.make(UserProfile, _quantity=num_participants)
+		cls.document = mommy.make(MinutesDocument, participants=cls.participants, moderator=cls.moderator)
+		cls.document.set_all_permissions(mommy.make(Group))
 
 	def test_get_editor(self):
 		"""
@@ -169,11 +171,12 @@ class TestEditor(WebTest):
 class TestMinutesList(WebTest):
 	csrf_checks = False
 
-	def setUp(self):
-		self.user = mommy.make(UserProfile, is_superuser=True)
-		self.minutes_document = mommy.make(MinutesDocument)
-		self.group = mommy.make(Group)
-		self.minutes_document.set_all_permissions(self.group)
+	@classmethod
+	def setUpTestData(cls):
+		cls.user = mommy.make(UserProfile, is_superuser=True)
+		cls.minutes_document = mommy.make(MinutesDocument)
+		cls.group = mommy.make(Group)
+		cls.minutes_document.set_all_permissions(cls.group)
 
 	def test_list_permission_display(self):
 		"""
@@ -210,8 +213,9 @@ class TestMinutesList(WebTest):
 class TestNewMinutesDocument(WebTest):
 	csrf_checks = False
 
-	def setUp(self):
-		self.user = mommy.make(UserProfile, is_superuser=True)
+	@classmethod
+	def setUpTestData(cls):
+		cls.user = mommy.make(UserProfile, is_superuser=True)
 
 	def test_save_new_minutes_document(self):
 		# get the editor page and save the site
@@ -235,7 +239,7 @@ class TestNewMinutesDocument(WebTest):
 		document = MinutesDocument.objects.get(title=text)
 
 		# check whether number of versions is correct
-		versions = revisions.get_for_object(document)
+		versions = Version.objects.get_for_object(document)
 		self.assertEqual(len(versions), 1)
 
 		# check whether the properties of the new document are correct

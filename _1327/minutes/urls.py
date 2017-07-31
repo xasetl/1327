@@ -1,11 +1,10 @@
 from django.conf.urls import url
-from django.contrib import admin
 
 from _1327.documents import urls as document_urls
 from _1327.documents import views as document_views
 from . import views
 
-admin.autodiscover()
+app_name = 'minutes'
 
 urlpatterns = [
 	url(r"list/(?P<groupid>[\d]+)$", views.list, name='list'),

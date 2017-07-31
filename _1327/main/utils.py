@@ -8,6 +8,10 @@ from django.utils.translation import ugettext_lazy as _
 
 from guardian.core import ObjectPermissionChecker
 
+import markdown
+from markdown.extensions import Extension
+from markdown.extensions.toc import TocExtension
+
 
 URL_TITLE_REGEX = re.compile(r'^[a-zA-Z0-9-_\/]*$')
 
@@ -15,13 +19,25 @@ URL_TITLE_REGEX = re.compile(r'^[a-zA-Z0-9-_\/]*$')
 def save_main_menu_item_order(main_menu_items, user, parent_id=None):
 	from .models import MenuItem
 	order_counter = 0
+
+	# check whether we are allowed to change all children of the current level
+	# in case we are not allowed to do that, we have to make sure, that we are not altering the original
+	# order of the menu items, as we are not allowed to do so.
+	all_menu_items_on_this_level = MenuItem.objects.filter(menu_type=MenuItem.MAIN_MENU, parent_id=parent_id)
+	menu_item_order_map = {menu_item: menu_item.order for menu_item in all_menu_items_on_this_level if menu_item.can_edit(user)}
+	use_old_order = len(menu_item_order_map) != all_menu_items_on_this_level.count()
+
 	for item in main_menu_items:
 		item_id = item['id']
 		menu_item = MenuItem.objects.get(pk=item_id)
 		if menu_item.can_edit(user):
 			menu_item.menu_type = MenuItem.MAIN_MENU
-			menu_item.order = order_counter
+			if use_old_order:
+				menu_item.order = menu_item_order_map[menu_item]
+			else:
+				menu_item.order = order_counter
 			order_counter += 1
+
 			if parent_id:
 				parent = MenuItem.objects.get(pk=parent_id)
 			else:
@@ -53,6 +69,19 @@ def save_footer_item_order(footer_items, user, order_counter=0):
 def abbreviation_explanation_markdown():
 	from .models import AbbreviationExplanation
 	return "\n" + ("\n".join([str(abbr) for abbr in AbbreviationExplanation.objects.all()]))
+
+
+# see https://pythonhosted.org/Markdown/release-2.6.html#safe_mode-deprecated
+class EscapeHtml(Extension):
+	def extendMarkdown(self, md, md_globals):
+		del md.preprocessors['html_block']
+		del md.inlinePatterns['html']
+
+
+def convert_markdown(text):
+	from _1327.documents.markdown_internal_link_extension import InternalLinksMarkdownExtension
+	md = markdown.Markdown(extensions=[EscapeHtml(), TocExtension(baselevel=2), InternalLinksMarkdownExtension(), 'markdown.extensions.abbr', 'markdown.extensions.tables'])
+	return md.convert(text + abbreviation_explanation_markdown()), md.toc
 
 
 def slugify(string):

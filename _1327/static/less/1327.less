@@ -135,6 +135,11 @@ a {
 	color: @gray-lighter;
 }
 
+// fix abbr underline (https://github.com/twbs/bootstrap/issues/22562)
+abbr[title] {
+	border-bottom: none;
+}
+
 div#wrapper {
 	position: relative;
 	min-height: 100%;
@@ -231,15 +236,13 @@ div#wrapper {
 }
 .login-info {
 	display: inline-block;
-	padding: 3px 10px 3px 10px;
+	padding: 3px 15px;
 }
 .login-button {
 	display: inline-block;
-	width: 50px;
 	height: 25px;
-	text-align: center;
 	color: @gray-lighter;
-	padding: 3px 0;
+	padding: 3px 15px;
 	&:hover,
 	&:focus {
 		background-color: @gray;
@@ -310,7 +313,7 @@ nav li:hover > .dropdown-menu {
 .menu-level-2 .menu-hover > a {
 	background-color: @gray-dark;
 }
-.dropdown {
+.modal-body .dropdown {
 	z-index: 999999;
 }
 .menu-level-2 {
@@ -347,19 +350,63 @@ nav li:hover > .dropdown-menu {
 	margin-bottom: 30px;
 }
 
+.content :first-child {
+	margin-top: 0;
+}
+
 .headline {
-	margin: 10px 0 0 0;
+	margin: 5px 0 10px 0;
+	height: 65px;
 }
-.headline-text {
-	font-size: 26px;
-	dominant-baseline: central;
-	fill: @gray-darker;
+
+.headline-triangle-back{
+    content: "";
+    position: relative;
+    width: 0;
+    height: 0;
+    top: 0px;
+    left: -10px;
+    box-sizing: border-box;
+    border-bottom: 10px solid @hpi-yellow;
+    border-left: 10px solid @hpi-yellow;
+    border-color: transparent transparent @hpi-yellow transparent;
+    z-index: -1;
 }
-.headline-bar {
-	fill: @hpi-yellow;
+
+.headline-box-end{
+    content: "";
+    width: 0;
+    height: 0;
+    top: 0;
+    box-sizing: border-box;
+    border-top: 50px solid @hpi-yellow;
+    border-right: 18px solid @hpi-yellow;
+    border-color: @hpi-yellow transparent transparent transparent;
+    position: relative;
+    float: left;
+    right: 10px;
 }
-.headline-bar-shadow {
-	fill: @hpi-gray;
+
+.headline-box {
+    vertical-align: top;
+    display: inline-block;
+    position: relative;
+    left: -10px;
+    line-height: @headline-height;
+    min-height: @headline-height;
+    background-color: @hpi-yellow;
+    font-size: 26px;
+    padding: 0 9px 0 20px;
+    height: 50px;
+    overflow: hidden;
+    max-width: ~"calc(100% - 18px)";
+    float: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.headline-box-shadow {
+	filter: drop-shadow(3px 3px 3px @hpi-gray);
 }
 
 ul.breadcrumbs {
@@ -469,13 +516,12 @@ footer {
 }
 
 @media print {
-	.headline {
-		position: relative;
-		left: -17px;
-
+	.headline-box {
+		left: 0;
+		padding-left: 15px;
 	}
-	.headline-text {
-		font-weight: bold;
+	.headline-box-shadow {
+		filter: none !important;
 	}
 	dt {
 	  float: left;
@@ -496,6 +542,7 @@ footer {
 	}
 	.container.content {
 		margin-bottom: 0;
+		padding-left: 15px;
 	}
 }
 

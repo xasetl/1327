@@ -1,9 +1,8 @@
 from django.conf.urls import url
-from django.contrib import admin
 
 from . import views
 
-admin.autodiscover()
+app_name = 'documents'
 
 urlpatterns = [
 	url(r"revert$", views.revert, name='revert'),

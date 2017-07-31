@@ -2,13 +2,14 @@ from datetime import datetime
 import hashlib
 
 from django.contrib.contenttypes.models import ContentType
-from django.core.urlresolvers import reverse
 from django.db import models
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 from guardian.shortcuts import assign_perm, get_groups_with_perms, get_users_with_perms, remove_perm
 from polymorphic.models import PolymorphicModel
 from reversion import revisions
+from reversion.models import Version
 
 from _1327.documents.markdown_internal_link_pattern import InternalLinkPattern
 from _1327.main.utils import slugify
@@ -95,7 +96,7 @@ class Document(PolymorphicModel):
 
 	def authors(self):
 		authors = set()
-		versions = revisions.get_for_object(self)
+		versions = Version.objects.get_for_object(self)
 		for version in versions:
 			authors.add(version.revision.user)
 		return authors
@@ -152,7 +153,7 @@ class Document(PolymorphicModel):
 
 	@property
 	def last_change(self):
-		last_revision = revisions.get_for_object(self).order_by('revision__date_created').last()
+		last_revision = Version.objects.get_for_object(self).order_by('revision__date_created').last()
 		if last_revision is None:
 			return None
 		return last_revision.revision.date_created
@@ -183,9 +184,9 @@ class Document(PolymorphicModel):
 
 class TemporaryDocumentText(models.Model):
 	text = models.TextField()
-	document = models.ForeignKey(Document, related_name='document')
+	document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='document')
 	created = models.DateTimeField(auto_now=True)
-	author = models.ForeignKey(UserProfile, related_name='temporary_documents')
+	author = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='temporary_documents')
 
 
 class Attachment(models.Model):
@@ -194,7 +195,7 @@ class Attachment(models.Model):
 		return '{}_{}'.format(hashlib.md5(str(datetime.now()).encode()).hexdigest(), int(max_id) + 1)
 
 	displayname = models.TextField(max_length=255, blank=True, default="", verbose_name=_("Display name"))
-	document = models.ForeignKey(Document, related_name='attachments', verbose_name=_("Document"))
+	document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='attachments', verbose_name=_("Document"))
 	created = models.DateTimeField(auto_now=True, verbose_name=_("Created"))
 	file = models.FileField(upload_to="documents/%y/%m/", verbose_name=_("File"))
 	hash_value = models.CharField(max_length=40, unique=True, default=get_hash, verbose_name=_("Hash value"))  # used in download urls
@@ -205,3 +206,6 @@ class Attachment(models.Model):
 	class Meta:
 		verbose_name = _("Attachment")
 		verbose_name_plural = _("Attachments")
+
+	def __str__(self):
+		return self.displayname

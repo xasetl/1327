@@ -20,11 +20,12 @@ class TestEditor(WebTest):
 		num_participants = 8
 
 		cls.user = mommy.make(UserProfile, is_superuser=True)
-		cls.user.groups.add(Group.objects.get(name=settings.STAFF_GROUP_NAME))
+		staff_group = Group.objects.get(name=settings.STAFF_GROUP_NAME)
+		cls.user.groups.add(staff_group)
 		cls.moderator = mommy.make(UserProfile)
 		cls.participants = mommy.make(UserProfile, _quantity=num_participants)
 		cls.document = mommy.make(MinutesDocument, participants=cls.participants, moderator=cls.moderator)
-		cls.document.set_all_permissions(mommy.make(Group))
+		assign_perm("minutes.add_minutesdocument", staff_group)
 
 	def test_get_editor(self):
 		"""
@@ -209,57 +210,116 @@ class TestMinutesList(WebTest):
 		response = self.app.get(reverse("minutes:list", args=[self.group.id]), user=self.user)
 		self.assertIn("glyphicon-user", response)
 
+	def test_no_minutes_available_text(self):
+		minutes = MinutesDocument.objects.all()
+		for document in minutes:
+			document.delete()
+
+		# if the user is not logged in he shall see a hint that tells him to log in
+		response = self.app.get(reverse("minutes:list", args=[self.group.id]))
+		self.assertEqual(response.status_code, 200)
+		self.assertIn('No minutes available.', response.body.decode('utf-8'))
+		self.assertIn('You might have to <a href="/login"> login </a> first.', response.body.decode('utf-8'))
+
+		# if the user is logged in there is definetely no minutes document available for him
+		response = self.app.get(reverse("minutes:list", args=[self.group.id]), user=self.user)
+		self.assertIn('No minutes available.', response.body.decode('utf-8'))
+		self.assertNotIn('You might have to <a href="/login"> login </a> first.', response.body.decode('utf-8'))
+
+		document = mommy.make(MinutesDocument)
+		document.set_all_permissions(self.group)
+		document.save()
+
+		# if the user is logged in and there is a minutes document he should not see any of the hints
+		response = self.app.get(reverse("minutes:list", args=[self.group.id]), user=self.user)
+		self.assertNotIn('No minutes available.', response.body.decode('utf-8'))
+		self.assertNotIn('You might have to <a href="/login"> login </a> first.', response.body.decode('utf-8'))
+
 
 class TestNewMinutesDocument(WebTest):
 	csrf_checks = False
 
 	@classmethod
 	def setUpTestData(cls):
-		cls.user = mommy.make(UserProfile, is_superuser=True)
+		cls.user = mommy.make(UserProfile)
+		cls.group = mommy.make(Group)
+		cls.user.groups.add(cls.group)
+		assign_perm("minutes.add_minutesdocument", cls.group)
 
-	def test_save_new_minutes_document(self):
+		# add another user to group
+		cls.group.user_set.add(mommy.make(UserProfile))
+
+	def test_save_first_minutes_document(self):
 		# get the editor page and save the site
-		group = mommy.make(Group)
-		group.user_set.add(self.user)
-		response = self.app.get(reverse('documents:create', args=['minutesdocument']), user=self.user)
+		response = self.app.get(reverse('documents:create', args=['minutesdocument']) + '?group={}'.format(self.group.id), user=self.user)
 		self.assertEqual(response.status_code, 200)
 
 		form = response.forms[0]
 		text = "Lorem ipsum"
 		form.set('text', text)
-		form.set('title', text)
-		form.set('participants', [self.user.pk])
 		form.set('comment', text)
 		form.set('url_title', slugify(text))
-		form.set('group', group.pk)
 
 		response = form.submit().follow()
 		self.assertEqual(response.status_code, 200)
 
-		document = MinutesDocument.objects.get(title=text)
+		document = MinutesDocument.objects.get(url_title=slugify(text))
 
 		# check whether number of versions is correct
 		versions = Version.objects.get_for_object(document)
 		self.assertEqual(len(versions), 1)
 
 		# check whether the properties of the new document are correct
-		self.assertEqual(document.title, text)
+		self.assertEqual(document.title, MinutesDocument.generate_new_title())
+		self.assertEqual(document.author, self.user)
+		self.assertEqual(document.moderator, self.user)
 		self.assertEqual(document.text, text)
 		self.assertEqual(versions[0].revision.comment, text)
+		self.assertListEqual(list(document.participants.all()), list(self.group.user_set.all()))
+
+		checker = ObjectPermissionChecker(self.group)
+		self.assertTrue(checker.has_perm(document.edit_permission_name, document))
+
+	def test_save_another_minutes_document(self):
+		test_title = "Test title"
+		test_moderator = mommy.make(UserProfile)
+		first_document = mommy.make(MinutesDocument, title=test_title, moderator=test_moderator)
+		first_document.set_all_permissions(self.group)
+
+		# get the editor page and save the site
+		response = self.app.get(reverse('documents:create', args=['minutesdocument']) + '?group={}'.format(self.group.id), user=self.user)
+		self.assertEqual(response.status_code, 200)
+
+		form = response.forms[0]
+		text = "Lorem ipsum"
+		form.set('text', text)
+		form.set('comment', text)
+		form.set('url_title', slugify(text))
+
+		response = form.submit().follow()
+		self.assertEqual(response.status_code, 200)
+
+		document = MinutesDocument.objects.get(url_title=slugify(text))
+
+		# check whether the properties of the new document are correct
+		self.assertEqual(document.title, test_title)  # should be taken from previous minutes document
+		self.assertEqual(document.moderator, test_moderator)  # should be taken from previous minutes document
+		self.assertEqual(document.author, self.user)
+		self.assertEqual(document.text, text)
+		self.assertListEqual(list(document.participants.all()), list(self.group.user_set.all()))
 
 	def test_group_field_hidden_when_user_has_one_group(self):
-		group = mommy.make(Group)
-		self.user.groups.add(group)
-		response = self.app.get(reverse('documents:create', args=['minutesdocument']), user=self.user)
+		response = self.app.get(reverse('documents:create', args=['minutesdocument']) + '?group={}'.format(self.group.id), user=self.user)
 		self.assertEqual(response.status_code, 200)
 
 		form = response.forms[0]
 		self.assertTrue("Hidden" in str(form.fields['group'][0]))
 
 	def test_group_field_not_hidden_when_user_has_multiple_groups(self):
-		groups = mommy.make(Group, _quantity=2)
-		self.user.groups.add(*groups)
-		response = self.app.get(reverse('documents:create', args=['minutesdocument']), user=self.user)
+		other_group = mommy.make(Group)
+		self.user.groups.add(other_group)
+		assign_perm("minutes.add_minutesdocument", other_group)
+		response = self.app.get(reverse('documents:create', args=['minutesdocument']) + '?group={}'.format(self.group.id), user=self.user)
 		self.assertEqual(response.status_code, 200)
 
 		form = response.forms[0]

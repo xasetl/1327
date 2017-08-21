@@ -53,12 +53,6 @@ STAFF_GROUP_NAME = "Staff"
 STUDENT_GROUP_NAME = "Student"
 UNIVERSITY_GROUP_NAME = "University Network"
 
-GROUPS_HIDDEN_DURING_CREATION = [
-	ANONYMOUS_GROUP_NAME,
-	STUDENT_GROUP_NAME,
-	UNIVERSITY_GROUP_NAME,
-]
-
 DEFAULT_USER_GROUP_NAME = ""  # if a name is set, all new users are automatically added to this group
 
 # Anonymous users in one of the given IP ranges are automatically assumed to be in the associated group.
@@ -270,6 +264,7 @@ TESTING = 'test' in sys.argv
 if TESTING:
 	DATABASES['default'] = {'ENGINE': 'django.db.backends.sqlite3'}  # use sqlite to speed tests up
 	logging.disable(logging.CRITICAL)  # disable logging, primarily to prevent console spam
+	LANGUAGE_CODE = 'en-US'  # force language to be English while testing
 
 
 # Create a localsettings.py to override settings per machine or user, e.g. for

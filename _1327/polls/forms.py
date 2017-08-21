@@ -17,8 +17,9 @@ class PollForm(DocumentForm):
 		fields = ['title', 'url_title', 'text', 'start_date', 'end_date', 'max_allowed_number_of_answers', 'show_results_immediately', 'comment', 'group', 'vote_groups']
 
 	def __init__(self, *args, **kwargs):
+		creation = kwargs.get('creation', None)
 		super().__init__(*args, **kwargs)
-		creation = kwargs.pop('creation', None)
+
 		if creation:
 			self.fields['vote_groups'].widget.attrs['class'] = 'select2-selection'
 		else:

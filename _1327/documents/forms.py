@@ -2,7 +2,7 @@ from django import forms
 from django.conf import settings
 from django.contrib.auth.models import Group, Permission
 from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import PermissionDenied
 from django.forms import BaseInlineFormSet
 from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext_lazy as _
@@ -24,22 +24,25 @@ class DocumentForm(forms.ModelForm):
 	def __init__(self, *args, **kwargs):
 		user = kwargs.pop('user', None)
 		creation = kwargs.pop('creation', None)
-		super().__init__(*args, **kwargs)
+		kwargs.pop('creation_group', None)
 		staff = Group.objects.get(name=settings.STAFF_GROUP_NAME)
+		super().__init__(*args, **kwargs)
 
-		self.user_groups = user.groups.exclude(name__in=settings.GROUPS_HIDDEN_DURING_CREATION)
-		if self.user_groups.count() == 0:
-			# The user should not be able to view that page, as he is not in any group that might be able to create
-			# content
-			raise PermissionDenied
+		add_permission_name = self.Meta.model().add_permission_name.split('.')[1]
+		if user.is_superuser:
+			permitted_groups = Group.objects.filter(permissions__codename=add_permission_name)
+		else:
+			permitted_groups = user.groups.filter(permissions__codename=add_permission_name)
+			if creation and permitted_groups.count() == 0:  # The user should not be able to view this form
+				raise PermissionDenied
 
-		self.fields['group'].queryset = self.user_groups
+		self.fields['group'].queryset = permitted_groups.all()
 		self.fields['group'].widget.attrs['class'] = 'select2-selection'
 		if creation:
-			if len(self.user_groups) == 1:
-				self.fields['group'].initial = self.user_groups[0]
+			if len(permitted_groups.all()) == 1:
+				self.fields['group'].initial = permitted_groups.first()
 				self.fields['group'].widget = forms.HiddenInput()
-			elif staff in self.user_groups and not self.fields['group'].initial:
+			elif staff in permitted_groups.all() and not self.fields['group'].initial:
 				self.fields['group'].initial = staff
 		else:
 			self.fields['group'].widget = forms.HiddenInput()
@@ -49,12 +52,6 @@ class DocumentForm(forms.ModelForm):
 		super().clean()
 		url_title = self.cleaned_data['url_title'].lower()
 		return slugify_and_clean_url_title(self.instance, url_title)
-
-	def clean_group(self):
-		value = self.cleaned_data['group']
-		if value and value not in self.user_groups:
-			raise ValidationError(_("You are not a member of this group!"))
-		return value
 
 	@classmethod
 	def get_formset_factory(cls):

@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import tempfile
 
@@ -124,7 +125,9 @@ class TestRevertion(WebTest):
 		versions = Version.objects.get_for_object(self.document)
 		self.assertEqual(len(versions), 3)
 		self.assertEqual(versions[0].object.text, "text")
-		self.assertEqual(versions[0].revision.comment, 'reverted to revision "test version"')
+		self.assertEqual(versions[0].revision.comment, 'reverted to revision "test version" (at {date})'.format(
+			date=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+		))
 
 	def test_revert_to_different_url(self):
 		document = Document.objects.get()
@@ -303,6 +306,7 @@ class TestAutosave(WebTest):
 
 	def test_autosave_with_different_document_types(self):
 		# create document
+		assign_perm("information_pages.add_informationdocument", self.group)
 		response = self.app.get(reverse('documents:create', args=['informationdocument']), user=self.user)
 		self.assertEqual(response.status_code, 200)
 		form = response.forms['document-form']
@@ -320,6 +324,7 @@ class TestAutosave(WebTest):
 		autosave = TemporaryDocumentText.objects.first()
 
 		# there should be no restore link on creation page for different document type
+		assign_perm("polls.add_poll", self.group)
 		response = self.app.get(reverse('documents:create', args=['poll']), user=self.user)
 		self.assertNotIn((reverse('edit', args=[url_title]) + '?restore={}'.format(autosave.id)), str(response.body))
 
@@ -1172,20 +1177,24 @@ class TestPermissionOverview(WebTest):
 
 	@classmethod
 	def setUpTestData(cls):
-		cls.user = mommy.make(UserProfile, is_superuser=True)
-		cls.user.groups.add(Group.objects.get(name=settings.STAFF_GROUP_NAME))
+		cls.user = mommy.make(UserProfile)
 		cls.minutes_document = mommy.make(MinutesDocument)
 		cls.poll = mommy.make(Poll)
 		cls.information_document = mommy.make(InformationDocument)
 		cls.group = mommy.make(Group)
+		cls.user.groups.add(cls.group)
 		cls.minutes_document.set_all_permissions(cls.group)
 		cls.poll.set_all_permissions(cls.group)
 		cls.information_document.set_all_permissions(cls.group)
+		assign_perm("minutes.add_minutesdocument", cls.group)
+		assign_perm("polls.add_poll", cls.group)
+		assign_perm("information_pages.add_informationdocument", cls.group)
 
 		cls.anonymous_group = Group.objects.get(name=settings.ANONYMOUS_GROUP_NAME)
 		cls.university_network_group = Group.objects.get(name=settings.UNIVERSITY_GROUP_NAME)
 		cls.student_group = Group.objects.get(name=settings.STUDENT_GROUP_NAME)
 		cls.staff_group = Group.objects.get(name=settings.STAFF_GROUP_NAME)
+
 		groups = [cls.anonymous_group, cls.university_network_group, cls.student_group, cls.staff_group]
 		cls.documents = [cls.minutes_document, cls.poll, cls.information_document]
 		for document in cls.documents:
@@ -1204,7 +1213,7 @@ class TestPermissionOverview(WebTest):
 			"glyphicon-briefcase permission-icon-edit"
 		]
 		for document in self.documents:
-			response = self.app.get(reverse(document.get_edit_url_name(), args=[self.minutes_document.url_title]), user=self.user)
+			response = self.app.get(reverse(document.get_edit_url_name(), args=[document.url_title]), user=self.user)
 			for icon in icons:
 				self.assertIn(icon, response)
 
@@ -1224,7 +1233,7 @@ class TestPermissionOverview(WebTest):
 			"glyphicon-briefcase permission-icon-view"
 		]
 		for document in self.documents:
-			response = self.app.get(reverse(document.get_edit_url_name(), args=[self.minutes_document.url_title]), user=self.user)
+			response = self.app.get(reverse(document.get_edit_url_name(), args=[document.url_title]), user=self.user)
 			for icon in icons:
 				self.assertIn(icon, response)
 
@@ -1235,35 +1244,32 @@ class DocumentCreationTests(WebTest):
 
 	@classmethod
 	def setUpTestData(cls):
-		cls.user = mommy.make(UserProfile, is_superuser=True)
-		for group in Group.objects.all():
-			cls.user.groups.add(group)
-		cls.user.save()
+		cls.user = mommy.make(UserProfile)
+		cls.group = mommy.make(Group)
+		cls.user.groups.add(cls.group)
+		assign_perm("information_pages.add_informationdocument", cls.group)
+		assign_perm("minutes.add_minutesdocument", cls.group)
 
 		cls.document_types = ['minutesdocument', 'informationdocument']
-		cls.hidden_groups = Group.objects.filter(name__in=settings.GROUPS_HIDDEN_DURING_CREATION)
 
 	def test_create_document_with_one_group(self):
 		for document_type in self.document_types:
 			response = self.app.get(reverse('documents:create', args=[document_type]), user=self.user)
 			self.assertEqual(response.status_code, 200)
 			body = response.body.decode('utf-8')
-			for group in self.hidden_groups:
-				self.assertNotIn('<option value="{}">{}</option>'.format(group.id, group.name), body)
 			self.assertIn('type="hidden" name="group"', body)
 
 	def test_create_document_with_two_groups(self):
 		group = mommy.make(Group)
 		self.user.groups.add(group)
-		self.user.save()
+		assign_perm("information_pages.add_informationdocument", group)
+		assign_perm("minutes.add_minutesdocument", group)
 
 		for document_type in self.document_types:
 			response = self.app.get(reverse('documents:create', args=[document_type]), user=self.user)
 			self.assertEqual(response.status_code, 200)
 			body = response.body.decode('utf-8')
-			for group in self.hidden_groups:
-				self.assertNotIn('<option value="{}">{}</option>'.format(group.id, group.name), body)
-			self.assertNotIn("name=group type=hidden", body, msg="User should have the choice of groups if he is in more than one group, that are not in the list of hidden groups")
+			self.assertNotIn("name=group type=hidden", body, msg="User should have the choice of groups if he is in more than one group, that can create minutes documents")
 
 	def test_create_document_with_no_groups(self):
 		for group in Group.objects.all():
